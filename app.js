@@ -41,11 +41,14 @@ async function readCSVFile(filePath) {
 }
 
 async function runStressTest() {
-  const browser = await puppeteer.launch({ headless: true });
+ 
 
   const SESSION_COUNT = users.length;
 
   const promises = Array.from({ length: SESSION_COUNT }, async (_, index) => {
+    
+    const browser = await puppeteer.launch({ headless: true });
+    
     const page = await browser.newPage();
 
     const startTime = performance.now();
@@ -64,15 +67,17 @@ async function runStressTest() {
     const endTime2 = performance.now();
     const responseTime2 = endTime2 - startTime;
   
-    console.log(`Session ${index + 1}: Response Time 2 - ${responseTime2/1000} s`);
+    console.log(`Session ${index + 1}: Response Time 2: ${responseTime2/1000} s`);
 
     await page.close();
+    
+    await browser.close();
 
     return { session: index + 1, responseTime1, responseTime2 };
   });
 
   const results = await Promise.all(promises);
-  await browser.close();
+ 
 
   // Write response times to a CSV file
   const csvContent = 'Session,ResponseTime(ms)\n' + results.map(result => `${result.session},${result.responseTime}`).join('\n');
