@@ -1,66 +1,98 @@
 const puppeteer = require('puppeteer');
 const fs = require('fs');
+const util = require('util');
 const csv = require('csv-parser');
+const { performance  } = require('perf_hooks');
+//const { performance, EventEmitter  } = require('perf_hooks');
 
-const url = 'http://125.209.94.198:8383/apex/f?p=109';
-const sessionsCount = 250;
+//process.setMaxListeners(700);
+
+const readFile = util.promisify(fs.readFile);
+
+const URL_TO_TEST = 'http://125.209.94.198:8383/apex/f?p=109';
+
+const CSV_FILE_PATH = 'response_times.csv';
 const usersFile = 'user.csv';
-const outputCSV = 'response_times.csv';
 
-async function loginAndMeasureResponseTime(page, username, password, sessionNumber) {
-  const start = Date.now();
+const timeout  = 300 * 10;
+
+var users = [];
+
+
+async function readCSVFile(filePath) {
+  try {
+    const data = await readFile(filePath, 'utf8');
+    const results = [];
+
+    // Use the csv-parser module to parse the CSV data
+    data
+      .trim() // Remove any leading/trailing whitespace
+      .split('\n') // Split the data by newline
+      .forEach((line) => {
+        const row = line.split(','); // Assuming CSV values are comma-separated
+        results.push(row);
+      });    
+
+    console.log(results);
+    // Process the 'results' array here or perform other operations.
+
+    return results;
+  } catch (error) {
+    console.error('Error reading the file:', error);
+    throw error;
+  }
+}
+
+async function runStressTest() {
+ 
+  const SESSION_COUNT = users.length;
+
+  const promises = Array.from({ length: SESSION_COUNT }, async (_, index) => {
+    
+    const browser = await puppeteer.launch({ headless: "new" });
+    
+    const page = await browser.newPage();
+
+    const startTime = performance.now();
+    await page.goto(URL_TO_TEST, { waitUntil : 'load', timeout });
+    const endTime1 = performance.now();
+
+    const responseTime1 = endTime1 - startTime;
+    console.log(`Session ${index + 1} - Response Time 1: ${responseTime1/1000} s`);
+    
+    await page.type('input[name="P9999_USERNAME"]', users[index][0]);
+    await page.type('input[name="P9999_PASSWORD"]', users[index][1]);
+    await page.click('#P9999_SUBMIT');
   
-  await page.type('input[name="P9999_USERNAME"]', String(username));
-  await page.type('input[name="P9999_PASSWORD"]', String(password));
-  await page.click('#P9999_SUBMIT');
+    await page.waitForNavigation({ waitUntil : 'load', timeout });
+  
+    const endTime2 = performance.now();
+    const responseTime2 = endTime2 - startTime;
+  
+    var respon_time = `Session ${index + 1}, Response Time 2: ${responseTime2/1000} s`;
+    console.log(respon_time);
 
-  await page.waitForNavigation({ waitUntil : 'load'});
+    fs.writeFileSync(CSV_FILE_PATH, respon_time);
+    await page.close();
+    
+    await browser.close();
 
-  const end = Date.now();
-  const responseTime = end - start;
+    return { session: index + 1, responseTime1, responseTime2 };
+  });
 
-  console.log(`Session ${sessionNumber}: Response Time - ${responseTime} ms`);
+  const results = await Promise.all(promises);
+ 
 
-  // Write response time to CSV file
-  fs.appendFileSync(outputCSV, `${sessionNumber},${responseTime}\n`);
+  // Write response times to a CSV file
+  //const csvContent = 'Session,ResponseTime(ms)\n' + results.map(result => `${result.session},${result.responseTime}`).join('\n');
+  //fs.writeFileSync(CSV_FILE_PATH, csvContent);
+  //console.log(`Response times saved to ${CSV_FILE_PATH}`);
 }
 
-async function main() {
-  // Read users from CSV file
-  const users = [];
-  fs.createReadStream(usersFile)
-    .pipe(csv())
-    .on('data', (row) => {
-      users.push(row);
-    })
-    .on('end', async () => {
-      // Open browser and create sessions
-      const browser = await puppeteer.launch();
-      const pages = await Promise.all([...Array(sessionsCount)].map(() => browser.newPage()));
 
-      // Prepare CSV file with header
-      fs.writeFileSync(outputCSV, 'Session,Response Time (ms)\n');
-
-      // Loop through sessions and login with different users
-      for (let i = 0; i < sessionsCount; i++) {
-        const page = pages[i];
-        const user = users[i % users.length];
-
-        await page.goto(url, { waitUntil: 'load', timeout: 0});
-
-        // Perform login and measure response time
-        await loginAndMeasureResponseTime(page, String(user["﻿uid"]), String(user["pwd"]), i + 1);
-
-        // Close the page to release resources
-        //await page.close();
-      }
-
-      // Execute all promises in parallel
-      await Promise.all(loginPromises);
-
-      // Close the browser
-      await browser.close();
-    });
-}
-
-main();
+(async()=>{
+users  = await readCSVFile(usersFile);
+})().then(()=>{
+  runStressTest().catch(error => console.error(error));
+});
+ 
